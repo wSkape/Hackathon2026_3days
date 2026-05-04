@@ -1,29 +1,34 @@
 """
-gaze_media_controller.py v5
+gaze_media_controller.py  v6
 ============================
 
-TROIS moteurs coordonnés :
+QUATRE fonctionnalités coordonnées :
 
 ┌──────────────────────────────────────────────────────────────────┐
-│  PAUSE MÉDIA  → MediaPipe Face Landmarker + iris tracking        │
-│  Si le REGARD est détourné → pause après LOOK_AWAY_THRESHOLD s   │
+│  PAUSE MÉDIA     → MediaPipe iris tracking                       │
+│  Regard détourné → pause après LOOK_AWAY_THRESHOLD s            │
 ├──────────────────────────────────────────────────────────────────┤
-│  SMART LOCK   → YOLO11n                                          │
-│  Si ABSENT → déclenche aussi la pause média (cascade)            │
-│             → verrouille l'OS après ABSENT_LOCK_DELAY s          │
+│  SMART LOCK      → YOLO11n                                       │
+│  Absent → pause média (cascade) → verrou OS                     │
 ├──────────────────────────────────────────────────────────────────┤
-│  AUTO-PLAY après déverrouillage                                  │
-│  Dès que YOLO détecte le retour de l'utilisateur après un        │
-│  smart lock, le script attend UNLOCK_RESUME_DELAY s puis         │
-│  envoie Play automatiquement.                                    │
+│  AUTO-PLAY       après déverrouillage smart lock                 │
+│  YOLO détecte le retour → play après UNLOCK_RESUME_DELAY s      │
+├──────────────────────────────────────────────────────────────────┤
+│  PRIVACY SHIELD  → YOLO11n  (≥ 2 personnes détectées)           │
+│  Windows  → Win+D (afficher bureau) immédiatement               │
+│  macOS    → Mission Control / bureau                             │
+│  Linux    → Super+D                                              │
+│  + pause média automatique                                       │
+│  Reprend quand il ne reste qu'une seule personne                 │
 └──────────────────────────────────────────────────────────────────┘
 
 Installation :
     pip install mediapipe opencv-python pynput numpy ultralytics
 
 Raccourcis :
-    L  →  activer / désactiver Smart Lock
-    Q  →  quitter
+    L  →  Smart Lock ON/OFF
+    P  →  Privacy Shield ON/OFF
+    Q  →  Quitter
 """
 
 import cv2
@@ -47,39 +52,41 @@ from ultralytics import YOLO
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── Pause média (regard) ──────────────────────────────────────────────────────
-LOOK_AWAY_THRESHOLD = 1.5      # s : regard détourné → pause
-RESUME_DELAY        = 0.3      # s : retour du regard → reprise
+LOOK_AWAY_THRESHOLD = 2.5
+RESUME_DELAY        = 0.4
 
-# ── Smart Lock (présence) ─────────────────────────────────────────────────────
-SMART_LOCK_ENABLED_DEFAULT = True
-ABSENT_LOCK_DELAY          = 10.0   # s d'absence → verrou OS
-ABSENT_MEDIA_DELAY         = 1.5    # s d'absence → pause média (avant le verrou)
-ABSENT_WARNING_BEFORE      = 3.0    # s avant verrou → avertissement visuel
+# ── Smart Lock ────────────────────────────────────────────────────────────────
+SMART_LOCK_ENABLED_DEFAULT   = True
+ABSENT_LOCK_DELAY            = 15.0   # s d'absence → verrou OS
+ABSENT_MEDIA_DELAY           = 3.0    # s d'absence → pause média
+ABSENT_WARNING_BEFORE        = 5.0    # s avant verrou → avertissement
 
 # ── Auto-play après smart lock ────────────────────────────────────────────────
-# Quand YOLO re-détecte l'utilisateur après un smart lock,
-# on attend ce délai (le temps qu'il déverrouille l'écran) avant de faire play.
-UNLOCK_RESUME_DELAY = 2.0      # s après retour → play automatique
+UNLOCK_RESUME_DELAY = 4.0
+
+# ── Privacy Shield ────────────────────────────────────────────────────────────
+PRIVACY_SHIELD_ENABLED_DEFAULT = True
+PRIVACY_PERSONS_THRESHOLD      = 2     # nb de personnes pour déclencher
+PRIVACY_TRIGGER_DELAY          = 1.0   # s avec ≥2 personnes avant déclenchement
+PRIVACY_RESTORE_DELAY          = 2.0   # s avec <2 personnes avant restauration
 
 # ── YOLO ──────────────────────────────────────────────────────────────────────
 YOLO_MODEL             = "yolo11n.pt"
 COCO_PERSON_CLASS      = 0
 YOLO_PERSON_CONFIDENCE = 0.45
-YOLO_EVERY_N_FRAMES    = 5     # 1 = chaque frame, 3 = une frame sur 3
+YOLO_EVERY_N_FRAMES    = 3
 
 # ── Caméra ────────────────────────────────────────────────────────────────────
 CAMERA_INDEX = 0
 FRAME_WIDTH  = 640
 FRAME_HEIGHT = 480
 
-# ── Seuils tête ───────────────────────────────────────────────────────────────
+# ── Seuils tête / iris ────────────────────────────────────────────────────────
 HEAD_YAW_MAX_DEG   = 55
 HEAD_PITCH_MAX_DEG = 45
-
-# ── Seuils iris ───────────────────────────────────────────────────────────────
-IRIS_H_THRESHOLD = 0.38
-IRIS_V_THRESHOLD = 0.42
-EAR_MIN          = 0.15
+IRIS_H_THRESHOLD   = 0.38
+IRIS_V_THRESHOLD   = 0.42
+EAR_MIN            = 0.15
 
 # ── MediaPipe ─────────────────────────────────────────────────────────────────
 DETECTION_CONFIDENCE = 0.50
@@ -99,10 +106,10 @@ MP_MODEL_URL  = (
 RIGHT_EYE = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
 LEFT_EYE  = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
 
-RIGHT_EYE_INNER = 133;  RIGHT_EYE_OUTER = 33
-LEFT_EYE_INNER  = 362;  LEFT_EYE_OUTER  = 263
-RIGHT_EYE_TOP   = 159;  RIGHT_EYE_BOT   = 145
-LEFT_EYE_TOP    = 386;  LEFT_EYE_BOT    = 374
+RIGHT_EYE_INNER   = 133;  RIGHT_EYE_OUTER = 33
+LEFT_EYE_INNER    = 362;  LEFT_EYE_OUTER  = 263
+RIGHT_EYE_TOP     = 159;  RIGHT_EYE_BOT   = 145
+LEFT_EYE_TOP      = 386;  LEFT_EYE_BOT    = 374
 RIGHT_IRIS_CENTER = 468
 LEFT_IRIS_CENTER  = 473
 
@@ -118,7 +125,7 @@ HEAD_PNP_3D = np.array([
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# VERROUILLAGE OS
+# ACTIONS OS
 # ──────────────────────────────────────────────────────────────────────────────
 
 def lock_screen():
@@ -136,6 +143,73 @@ def lock_screen():
                 subprocess.run(["xdg-screensaver", "lock"], check=False)
     except Exception as e:
         print(f"[SMART LOCK] Erreur : {e}")
+
+
+def show_desktop():
+    """
+    Affiche le bureau (masque toutes les fenêtres).
+    Windows : Win+D
+    macOS   : Mission Control → bureau (Fn+F11 ou Exposé)
+    Linux   : Super+D (GNOME/KDE) ou wmctrl
+    """
+    OS = platform.system()
+    print(f"[PRIVACY] Affichage bureau ({OS})…")
+    kb = Controller()
+    try:
+        if OS == "Windows":
+            # Win + D
+            with kb.pressed(Key.cmd):
+                kb.press("d")
+                kb.release("d")
+        elif OS == "Darwin":
+            # Ctrl + F3 = afficher le bureau sur macOS standard
+            # ou via osascript pour être sûr
+            subprocess.run([
+                "osascript", "-e",
+                'tell application "Finder" to set miniaturized of windows of '
+                '(every application process whose visible is true) to true'
+            ], check=False)
+        else:
+            # GNOME / KDE : Super+D
+            try:
+                with kb.pressed(Key.cmd):
+                    kb.press("d")
+                    kb.release("d")
+            except Exception:
+                subprocess.run(["wmctrl", "-k", "on"], check=False)
+    except Exception as e:
+        print(f"[PRIVACY] Erreur show_desktop : {e}")
+
+
+def restore_desktop():
+    """
+    Restaure les fenêtres (Win+D une deuxième fois = toggle).
+    macOS : dé-minimise toutes les fenêtres via osascript.
+    Linux : wmctrl -k off
+    """
+    OS = platform.system()
+    print(f"[PRIVACY] Restauration bureau ({OS})…")
+    kb = Controller()
+    try:
+        if OS == "Windows":
+            with kb.pressed(Key.cmd):
+                kb.press("d")
+                kb.release("d")
+        elif OS == "Darwin":
+            subprocess.run([
+                "osascript", "-e",
+                'tell application "Finder" to set miniaturized of windows of '
+                '(every application process whose visible is true) to false'
+            ], check=False)
+        else:
+            try:
+                with kb.pressed(Key.cmd):
+                    kb.press("d")
+                    kb.release("d")
+            except Exception:
+                subprocess.run(["wmctrl", "-k", "off"], check=False)
+    except Exception as e:
+        print(f"[PRIVACY] Erreur restore_desktop : {e}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -237,7 +311,7 @@ class MediaController:
 def main():
     download_mp_model(MP_MODEL_PATH, MP_MODEL_URL)
 
-    print("[INFO] Chargement YOLO11n… (téléchargement auto si absent)")
+    print("[INFO] Chargement YOLO11n…")
     yolo_model = YOLO(YOLO_MODEL)
     print("[INFO] YOLO prêt.")
 
@@ -260,27 +334,33 @@ def main():
 
     media = MediaController()
 
-    # ── État : pause média (regard) ───────────────────────────────────────────
-    look_away_since = None   # timestamp début regard détourné
-    return_since    = None   # timestamp retour du regard
+    # ── État : pause média ────────────────────────────────────────────────────
+    look_away_since = None
+    return_since    = None
 
     # ── État : Smart Lock ─────────────────────────────────────────────────────
     smart_lock_on  = SMART_LOCK_ENABLED_DEFAULT
-    absent_since   = None    # timestamp début absence YOLO
-    lock_triggered = False   # verrou déjà envoyé pour cette absence
+    absent_since   = None
+    lock_triggered = False
 
-    # ── État : auto-play après déverrouillage ─────────────────────────────────
-    # Après un smart lock, on note le moment où l'utilisateur réapparaît.
-    # On attend UNLOCK_RESUME_DELAY secondes puis on fait play.
-    waiting_for_unlock_play = False  # True = on attend que l'utilisateur déverrouille
-    returned_after_lock_at  = None   # timestamp retour post-smart-lock
+    # ── État : auto-play post-lock ────────────────────────────────────────────
+    waiting_for_unlock_play = False
+    returned_after_lock_at  = None
+
+    # ── État : Privacy Shield ─────────────────────────────────────────────────
+    privacy_on             = PRIVACY_SHIELD_ENABLED_DEFAULT
+    privacy_triggered      = False   # bureau déjà affiché pour cette intrusion
+    multi_person_since     = None    # timestamp début ≥2 personnes
+    single_person_since    = None    # timestamp retour <2 personnes
 
     # ── Cache YOLO ────────────────────────────────────────────────────────────
-    person_present = True    # optimiste au démarrage
+    # On augmente num_classes pour Privacy Shield : on a besoin du compte exact
+    person_count   = 1   # optimiste
+    person_present = True
     yolo_boxes     = []
     frame_counter  = 0
 
-    print("[INFO] Démarré  |  'L' Smart Lock  |  'Q' Quitter")
+    print("[INFO] Démarré  |  'L' Smart Lock  |  'P' Privacy Shield  |  'Q' Quitter")
 
     while True:
         ret, frame = cap.read()
@@ -291,7 +371,7 @@ def main():
         now   = time.time()
         frame_counter += 1
 
-        # ── YOLO : détection de présence ──────────────────────────────────────
+        # ── YOLO ──────────────────────────────────────────────────────────────
         if frame_counter % YOLO_EVERY_N_FRAMES == 0:
             res   = yolo_model(frame,
                                classes=[COCO_PERSON_CLASS],
@@ -303,11 +383,13 @@ def main():
                 for box in boxes:
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     if (x2 - x1) * (y2 - y1) / (w * h) > 0.02:
-                        valid.append((int(x1), int(y1), int(x2), int(y2)))
-            person_present = len(valid) > 0
+                        valid.append((int(x1), int(y1), int(x2), int(y2),
+                                      float(box.conf[0])))
+            person_count   = len(valid)
+            person_present = person_count >= 1
             yolo_boxes     = valid
 
-        # ── MediaPipe : gaze / iris ───────────────────────────────────────────
+        # ── MediaPipe : gaze ──────────────────────────────────────────────────
         mp_img    = mp.Image(image_format=mp.ImageFormat.SRGB,
                              data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         mp_result = mp_detector.detect(mp_img)
@@ -358,62 +440,95 @@ def main():
             ]
 
         # ══════════════════════════════════════════════════════════════════════
-        # LOGIQUE PRINCIPALE
+        # LOGIQUE
         # ══════════════════════════════════════════════════════════════════════
 
-        # ── Smart Lock ────────────────────────────────────────────────────────
+        # ── 1. Privacy Shield ─────────────────────────────────────────────────
+        privacy_countdown = None   # s avant déclenchement (None = inactif)
+
+        if privacy_on:
+            if person_count >= PRIVACY_PERSONS_THRESHOLD:
+                single_person_since = None   # reset du timer de restauration
+
+                if multi_person_since is None:
+                    multi_person_since = now
+                    print(f"[PRIVACY] {person_count} personnes détectées !")
+
+                elapsed_multi = now - multi_person_since
+                remaining     = max(0.0, PRIVACY_TRIGGER_DELAY - elapsed_multi)
+                privacy_countdown = remaining
+
+                if elapsed_multi >= PRIVACY_TRIGGER_DELAY and not privacy_triggered:
+                    privacy_triggered = True
+                    media.pause()
+                    threading.Thread(target=show_desktop, daemon=True).start()
+
+            else:
+                # Moins de 2 personnes → peut-on restaurer ?
+                multi_person_since = None
+
+                if privacy_triggered:
+                    if single_person_since is None:
+                        single_person_since = now
+                    elif now - single_person_since >= PRIVACY_RESTORE_DELAY:
+                        print("[PRIVACY] Retour à une seule personne — restauration.")
+                        privacy_triggered   = False
+                        single_person_since = None
+                        threading.Thread(target=restore_desktop, daemon=True).start()
+                        # NB : on ne fait PAS play ici — c'est le moteur regard
+                        #      ou auto-play post-lock qui s'en chargera.
+                else:
+                    single_person_since = None
+
+        # ── 2. Smart Lock ─────────────────────────────────────────────────────
         lock_countdown = None
 
         if smart_lock_on:
             if not person_present:
-                # L'utilisateur est absent
                 if absent_since is None:
                     absent_since = now
                     print("[SMART LOCK] Absence détectée.")
 
                 elapsed = now - absent_since
 
-                # 1) Cascade : pause média dès ABSENT_MEDIA_DELAY s d'absence
                 if elapsed >= ABSENT_MEDIA_DELAY:
                     media.pause()
 
-                # 2) Compte à rebours vers le verrou
                 remaining      = ABSENT_LOCK_DELAY - elapsed
                 lock_countdown = max(0.0, remaining)
 
-                # 3) Verrouillage OS
                 if elapsed >= ABSENT_LOCK_DELAY and not lock_triggered:
                     lock_triggered          = True
-                    waiting_for_unlock_play = True   # arme l'auto-play
+                    waiting_for_unlock_play = True
                     returned_after_lock_at  = None
                     absent_since            = None
                     threading.Thread(target=lock_screen, daemon=True).start()
 
-                # Reset timers du regard (inutile si absent)
                 look_away_since = None
                 return_since    = None
 
             else:
-                # L'utilisateur est de retour
                 if absent_since is not None:
-                    print("[SMART LOCK] Retour détecté — compte à rebours annulé.")
-                absent_since = None
+                    print("[SMART LOCK] Retour — annulé.")
+                absent_since   = None
+                lock_triggered = False
 
-                # Auto-play post-smart-lock
                 if waiting_for_unlock_play:
                     if returned_after_lock_at is None:
                         returned_after_lock_at = now
                         print(f"[AUTO-PLAY] Retour détecté, play dans {UNLOCK_RESUME_DELAY:.0f}s…")
                     elif now - returned_after_lock_at >= UNLOCK_RESUME_DELAY:
-                        print("[AUTO-PLAY] ▶  Reprise automatique après déverrouillage.")
                         media.play()
                         waiting_for_unlock_play = False
                         returned_after_lock_at  = None
 
-        # ── Pause média (regard) ──────────────────────────────────────────────
-        # Actif seulement si la personne est présente ET que l'auto-play n'est
-        # pas en attente (évite de pauser juste après avoir repris).
-        if person_present and not waiting_for_unlock_play:
+        # ── 3. Pause média (regard) ───────────────────────────────────────────
+        # Désactivé si Privacy Shield a pris la main OU auto-play en attente
+        gaze_active = (person_present
+                       and not waiting_for_unlock_play
+                       and not privacy_triggered)
+
+        if gaze_active:
             if not looking:
                 return_since = None
                 if look_away_since is None:
@@ -438,56 +553,96 @@ def main():
         # HUD
         # ══════════════════════════════════════════════════════════════════════
 
-        # Boîtes YOLO
-        for (x1, y1, x2, y2) in yolo_boxes:
-            col = (0, 200, 80) if person_present else (60, 60, 60)
+        # Boîtes YOLO — couleur par personne
+        BOX_COLORS = [(0, 200, 80), (0, 80, 255), (255, 160, 0), (180, 0, 255)]
+        for i, (x1, y1, x2, y2, conf) in enumerate(yolo_boxes):
+            col = BOX_COLORS[i % len(BOX_COLORS)]
+            # Si Privacy Shield actif, boîtes rouges pour les intrus
+            if privacy_triggered and i >= 1:
+                col = (0, 0, 230)
             cv2.rectangle(frame, (x1, y1), (x2, y2), col, 2)
-            cv2.putText(frame, "person", (x1, y1 - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, col, 1)
+            label = f"P{i+1} {conf:.0%}"
+            cv2.putText(frame, label, (x1, y1 - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.46, col, 1)
+
+        # Overlay rouge si Privacy Shield déclenché
+        if privacy_triggered:
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, 0), (w, h), (0, 0, 180), -1)
+            cv2.addWeighted(overlay, 0.08, frame, 0.92, 0, frame)
 
         # Bande top
         cv2.rectangle(frame, (0, 0), (w, 42), (18, 18, 18), -1)
 
-        # Présence
         pres_col = (60, 220, 60) if person_present else (50, 50, 220)
-        cv2.putText(frame, "Présent" if person_present else "Absent",
-                    (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.72, pres_col, 2)
+        pres_txt = (f"{person_count} personne{'s' if person_count > 1 else ''}"
+                    if person_present else "Absent")
+        cv2.putText(frame, pres_txt, (10, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.68, pres_col, 2)
 
-        # Regard
         if person_present and mp_result.face_landmarks:
             gaze_col = (80, 200, 255) if looking else (50, 100, 255)
             cv2.putText(frame, "Regarde" if looking else "Détourné",
-                        (130, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, gaze_col, 2)
+                        (185, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.62, gaze_col, 2)
 
-        # Média
         media_col = (130, 100, 255) if media.is_paused else (100, 255, 100)
         cv2.putText(frame, "PAUSE" if media.is_paused else "LECTURE",
                     (w - 115, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.68, media_col, 2)
 
-        # Bande Smart Lock
+        # Bande badges
         cv2.rectangle(frame, (0, 42), (w, 62), (28, 28, 28), -1)
-        sl_col = (30, 180, 255) if smart_lock_on else (80, 80, 80)
-        cv2.putText(frame, f"[L] SMART LOCK {'ON' if smart_lock_on else 'OFF'}",
-                    (10, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.46, sl_col, 1)
+
+        sl_col = (30, 180, 255) if smart_lock_on else (70, 70, 70)
+        cv2.putText(frame, f"[L] LOCK {'ON' if smart_lock_on else 'OFF'}",
+                    (10, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.44, sl_col, 1)
+
+        pv_col = (0, 200, 200) if privacy_on else (70, 70, 70)
+        pv_state = "ACTIF" if privacy_triggered else ("ON" if privacy_on else "OFF")
+        cv2.putText(frame, f"[P] PRIVACY {pv_state}",
+                    (185, 57), cv2.FONT_HERSHEY_SIMPLEX, 0.44, pv_col, 1)
+
+        # Avertissement Privacy Shield (compte à rebours)
+        if privacy_countdown is not None and not privacy_triggered:
+            ratio_p = 1.0 - (privacy_countdown / PRIVACY_TRIGGER_DELAY)
+            bar_w_p = int(ratio_p * w)
+            # Fond orange clignotant
+            pulse   = abs(math.sin(now * 6))
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, 0), (w, h), (0, 80, 220), -1)
+            cv2.addWeighted(overlay, 0.08 + 0.08 * pulse, frame,
+                            1 - (0.08 + 0.08 * pulse), 0, frame)
+
+            warn = f"⚠  {person_count} personnes détectées — bureau dans {privacy_countdown:.1f}s"
+            (tw, _), _ = cv2.getTextSize(warn, cv2.FONT_HERSHEY_SIMPLEX, 0.62, 2)
+            tx = (w - tw) // 2
+            cv2.putText(frame, warn, (tx+1, h//2+1),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 0, 0), 2)
+            cv2.putText(frame, warn, (tx, h//2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 180, 255), 2)
+
+            cv2.rectangle(frame, (0, h - 10), (w, h),      (50, 50, 50), -1)
+            cv2.rectangle(frame, (0, h - 10), (bar_w_p, h),(0, 120, 255), -1)
+
+        # Avertissement Privacy Shield déclenché
+        elif privacy_triggered:
+            msg = "PRIVACY SHIELD ACTIF — Bureau affiché"
+            (tw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
+            tx = (w - tw) // 2
+            cv2.putText(frame, msg, (tx+1, h//2+1),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 2)
+            cv2.putText(frame, msg, (tx, h//2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 220, 220), 2)
 
         # Auto-play en attente
-        if waiting_for_unlock_play and returned_after_lock_at:
+        elif waiting_for_unlock_play and returned_after_lock_at:
             remaining_ap = max(0.0, UNLOCK_RESUME_DELAY - (now - returned_after_lock_at))
             ap_txt = f"▶  Auto-play dans {remaining_ap:.1f}s…"
             (tw, _), _ = cv2.getTextSize(ap_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-            cv2.putText(frame, ap_txt, ((w - tw) // 2, 57),
+            cv2.putText(frame, ap_txt, ((w - tw)//2, 57),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
 
-        # Debug gaze
-        for i, line in enumerate(debug_gaze):
-            cv2.putText(frame, line, (10, h - 48 + i * 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.44, (150, 150, 150), 1)
-
-        cv2.putText(frame, "[Q] Quitter", (w - 110, h - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (70, 70, 70), 1)
-
-        # ── Barre : pause média (regard) ──────────────────────────────────────
-        if look_away_since and not media.is_paused and person_present:
+        # Barre pause média (regard)
+        elif look_away_since and not media.is_paused and gaze_active:
             elapsed   = now - look_away_since
             ratio     = min(elapsed / LOOK_AWAY_THRESHOLD, 1.0)
             bar_w     = int(ratio * w)
@@ -498,7 +653,7 @@ def main():
             cv2.putText(frame, f"Pause regard dans {remaining:.1f}s",
                         (10, h - 13), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 1)
 
-        # ── Compte à rebours Smart Lock ───────────────────────────────────────
+        # Barre Smart Lock
         elif lock_countdown is not None and smart_lock_on:
             ratio_l = 1.0 - (lock_countdown / ABSENT_LOCK_DELAY)
             bar_w_l = int(ratio_l * w)
@@ -521,13 +676,21 @@ def main():
             cv2.rectangle(frame, (0, h - 12), (w, h), (40, 40, 40), -1)
             r3 = int(50 + 205 * ratio_l);  g3 = int(150 * (1 - ratio_l))
             cv2.rectangle(frame, (0, h - 12), (bar_w_l, h), (0, g3, r3), -1)
-            absent_elapsed = ABSENT_LOCK_DELAY - lock_countdown
+            absent_el = ABSENT_LOCK_DELAY - lock_countdown
             cv2.putText(frame,
-                        f"Absent {absent_elapsed:.0f}s / {ABSENT_LOCK_DELAY:.0f}s  |  "
-                        f"Pause média dans {max(0.0, ABSENT_MEDIA_DELAY - absent_elapsed):.1f}s",
+                        f"Absent {absent_el:.0f}s/{ABSENT_LOCK_DELAY:.0f}s  |  "
+                        f"Pause dans {max(0.0, ABSENT_MEDIA_DELAY - absent_el):.1f}s",
                         (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1)
 
-        cv2.imshow("Gaze Media Controller v5", frame)
+        # Debug gaze
+        for i, line in enumerate(debug_gaze):
+            cv2.putText(frame, line, (10, h - 48 + i * 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.43, (140, 140, 140), 1)
+
+        cv2.putText(frame, "[Q] Quitter", (w - 110, h - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (65, 65, 65), 1)
+
+        cv2.imshow("Gaze Media Controller v6", frame)
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q"):
             break
@@ -537,6 +700,14 @@ def main():
             waiting_for_unlock_play = False
             returned_after_lock_at  = None
             print(f"[SMART LOCK] {'ON' if smart_lock_on else 'OFF'}")
+        elif key == ord("p"):
+            privacy_on         = not privacy_on
+            privacy_triggered  = False
+            multi_person_since = None
+            single_person_since= None
+            if not privacy_on:
+                threading.Thread(target=restore_desktop, daemon=True).start()
+            print(f"[PRIVACY SHIELD] {'ON' if privacy_on else 'OFF'}")
 
     cap.release()
     cv2.destroyAllWindows()
