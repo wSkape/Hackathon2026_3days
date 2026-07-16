@@ -1,0 +1,23 @@
+import numpy as np
+
+# INDICES LANDMARKS MEDIAPIPE
+
+RIGHT_EYE = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
+LEFT_EYE  = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
+
+RIGHT_EYE_INNER   = 133;  RIGHT_EYE_OUTER = 33
+LEFT_EYE_INNER    = 362;  LEFT_EYE_OUTER  = 263
+RIGHT_EYE_TOP     = 159;  RIGHT_EYE_BOT   = 145
+LEFT_EYE_TOP      = 386;  LEFT_EYE_BOT    = 374
+RIGHT_IRIS_CENTER = 468
+LEFT_IRIS_CENTER  = 473
+
+HEAD_PNP_INDICES = [1, 152, 263, 33, 287, 57]
+HEAD_PNP_3D = np.array([
+    ( 0.0,    0.0,    0.0),
+    ( 0.0,  -63.6,  -12.5),
+    (-43.3,  32.7,  -26.0),
+    ( 43.3,  32.7,  -26.0),
+    (-28.9, -28.9,  -24.1),
+    ( 28.9, -28.9,  -24.1),
+], dtype=np.float64)
