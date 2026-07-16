@@ -11,11 +11,11 @@ A webcam-based desktop assistant built with MediaPipe, YOLO11, and OpenCV. It wa
 **Banpei :** a floating always-on-top avatar that reacts to your posture and fatigue (`ok` / `tired` / `angry`), running as a separate always-on-top window.
 
 ## Shortcut	Action
-| :-----: | | :-----: |
-| `L` | |Toggle Smart Lock|
-| `P`	| |Toggle Privacy Shield|
-| `B`	| |Toggle Banpei debug overlay|
-| `Q` |	|Quit|
+| :-----: | :-----: |
+| `L` | Toggle Smart Lock|
+| `P`	| Toggle Privacy Shield|
+| `B`	| Toggle Banpei debug overlay|
+| `Q` |	Quit|
 
 ## Quick start (Windows)
 
@@ -41,12 +41,12 @@ python gaze_media_controller.py
 
 # Project structure
 
-| :-----: | | :-----: |
-|gaze_media_controller.py   | |# main loop: camera, YOLO, MediaPipe, feature logic, HUD|
-|banpei_core.py             | |# posture/fatigue detectors + state machine (imported by the controller)|
-|banpei.py                  | |# standalone always-on-top avatar window (launched automatically)|
-|config.py                  | |# tunable thresholds and constants|
-|mp_constantes.py           | |# MediaPipe landmark indices used for gaze/head-pose estimation|
+| :-----: | :-----: |
+|gaze_media_controller.py   | # main loop: camera, YOLO, MediaPipe, feature logic, HUD|
+|banpei_core.py             | # posture/fatigue detectors + state machine (imported by the controller)|
+|banpei.py                  | # standalone always-on-top avatar window (launched automatically)|
+|config.py                  | # tunable thresholds and constants|
+|mp_constantes.py           | # MediaPipe landmark indices used for gaze/head-pose estimation|
 
 ## Requirements
 
